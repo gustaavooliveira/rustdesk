@@ -84,7 +84,7 @@ jobs:
         run: |
           set INCLUDE=%VCPKG_ROOT%\installed\x64-windows-static\include;%INCLUDE%
           set LIB=%VCPKG_ROOT%\installed\x64-windows-static\lib;%LIB%
-          set LIBCLANG_PATH=%LLVM_PATH%\bin
+          set BINDGEN_EXTRA_CLANG_ARGS=-I%VCPKG_ROOT%\installed\x64-windows-static\include
           cargo build --release --features "flutter,inline" --lib
 
       - name: Prepare Flutter build
