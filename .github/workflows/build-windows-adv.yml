@@ -1,0 +1,131 @@
+name: Build ADV HELP (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_artifact:
+        description: 'Fazer upload do build como artifact'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.75"
+  FLUTTER_VERSION: "3.24.5"
+  VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836"
+  VERSION: "1.4.8-adv"
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Setup LLVM
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "15.0"
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+
+      - name: Install vcpkg dependencies
+        shell: cmd
+        run: |
+          %VCPKG_ROOT%\vcpkg.exe install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build Rust core library
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: |
+          cargo build --release --features "flutter,inline" --lib
+
+      - name: Prepare Flutter build
+        working-directory: flutter
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+
+      - name: Copy librustdesk.dll for Flutter
+        shell: pwsh
+        run: |
+          $target = "target/release"
+          $flutterLib = "flutter/windows/runner/Debug"
+          New-Item -ItemType Directory -Force -Path $flutterLib | Out-Null
+          Copy-Item "$target/librustdesk.dll" "$flutterLib/" -ErrorAction SilentlyContinue
+          Copy-Item "$target/librustdesk.dll" "flutter/windows/runner/Release/" -ErrorAction SilentlyContinue
+
+      - name: Build Flutter Windows
+        working-directory: flutter
+        run: |
+          flutter build windows --release
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          $releaseDir = "flutter/build/windows/x64/runner/Release"
+          $outputDir = "adv-help-windows"
+
+          if (-Not (Test-Path $releaseDir)) {
+            Write-Error "Diretorio de release nao encontrado: $releaseDir"
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+          Copy-Item -Path "$releaseDir/*" -Destination $outputDir -Recurse -Force
+
+          # Copiar DLL do Rust também
+          Copy-Item -Path "target/release/librustdesk.dll" -Destination $outputDir -Force -ErrorAction SilentlyContinue
+
+          $zipName = "adv-help-$env:VERSION-windows-x64.zip"
+          Compress-Archive -Path "$outputDir/*" -DestinationPath $zipName -Force
+
+          Write-Host "Pacote gerado: $zipName"
+          Get-Item $zipName | Select-Object Name, Length, LastWriteTime
+
+      - name: Upload artifact
+        if: ${{ inputs.upload_artifact == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: adv-help-windows-${{ env.VERSION }}
+          path: adv-help-*-windows-x64.zip
+          retention-days: 30
+          if-no-files-found: error
