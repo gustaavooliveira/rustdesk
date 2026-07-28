@@ -75,9 +75,16 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build Rust core library
+        shell: cmd
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+          VCPKGRS_TRIPLET: x64-windows-static
+          VCPKGRS_DYNAMIC: "0"
         run: |
+          set INCLUDE=%VCPKG_ROOT%\installed\x64-windows-static\include;%INCLUDE%
+          set LIB=%VCPKG_ROOT%\installed\x64-windows-static\lib;%LIB%
+          set LIBCLANG_PATH=%LLVM_PATH%\bin
           cargo build --release --features "flutter,inline" --lib
 
       - name: Prepare Flutter build
